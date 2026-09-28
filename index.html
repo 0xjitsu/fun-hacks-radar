@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Fun Hacks Radar</title>
+<meta name="description" content="Hackathons and creative open calls for Berna and 0xjitsu. Filter by lane, mode, and format. Sort by deadline, registration, or prize. Apply links only — nothing is submitted for you." />
+<meta name="theme-color" content="#120e0c" />
+<link rel="icon" href="./favicon.ico" sizes="any" />
+<link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+<link rel="apple-touch-icon" href="./assets/apple-touch-icon.png" />
+<link rel="preload" href="./assets/fonts/outfit-latin.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="./assets/fonts/fraunces-latin.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="stylesheet" href="./styles.css" />
+<script>
+(function () {
+  var p = new URLSearchParams(location.search);
+  var q = p.get("theme");
+  var stored = null;
+  try { stored = localStorage.getItem("fhr-theme"); } catch (e) {}
+  var theme = (q === "light" || q === "dark") ? q
+    : (stored === "light" || stored === "dark") ? stored
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.setAttribute("data-theme", theme);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", theme === "dark" ? "#120e0c" : "#f4ece3");
+  var qv = p.get("view");
+  var sv = null;
+  try { sv = localStorage.getItem("fhr-view"); } catch (e) {}
+  var wide = matchMedia("(min-width: 1040px)").matches;
+  var view = (qv === "cards" || qv === "table") ? qv
+    : (sv === "cards" || sv === "table") ? sv
+    : (wide ? "table" : "cards");
+  document.documentElement.setAttribute("data-view", view);
+})();
+</script>
+</head>
+<body>
+<a class="skip" href="#board">Skip to results</a>
+<header class="topbar">
+  <div class="wrap bar">
+    <div class="brandrow">
+      <a class="brand" href="./">
+        <img class="mark" src="./favicon.svg" width="40" height="40" alt="" />
+        <span class="brand-text">
+          <span class="eyebrow">Berna · 0xjitsu</span>
+          <h1>Fun Hacks Radar</h1>
+        </span>
+      </a>
+      <div class="toggles">
+        <div class="seg" role="group" aria-label="View">
+          <button type="button" id="view-cards" aria-pressed="true">Cards</button>
+          <button type="button" id="view-table" aria-pressed="false">Table</button>
+        </div>
+        <div class="seg" role="group" aria-label="Color theme">
+          <button type="button" id="theme-light" aria-pressed="false">Day</button>
+          <button type="button" id="theme-night" aria-pressed="true">Night</button>
+        </div>
+      </div>
+    </div>
+    <div class="searchrow">
+      <label class="sr" for="q">Search calls</label>
+      <input id="q" type="search" placeholder="Search name, tag, fit…" autocomplete="off" enterkeyhint="search" />
+      <label class="sr" for="sort">Sort</label>
+      <select id="sort">
+        <option value="deadline">Soonest deadline</option>
+        <option value="registration">Registration date</option>
+        <option value="prize">Prize amount</option>
+        <option value="name">Name</option>
+      </select>
+      <label class="chk" for="hideExpired"><input type="checkbox" id="hideExpired" checked /> Hide expired</label>
+    </div>
+  </div>
+</header>
+
+<div class="wrap intro">
+  <p class="lede">A harvest board of hackathons and creative open calls — agents, film, regen, immersive. Deadlines stay in source time. Countdowns use your clock. Apply links only; this page never registers you.</p>
+</div>
+
+<div class="wrap filters">
+  <div class="chip-row" id="lane-chips" role="group" aria-label="Lane">
+    <span class="chip-label">Lane</span>
+    <button type="button" class="chip is-on" data-lane="all" aria-pressed="true">All</button>
+    <button type="button" class="chip" data-lane="code" aria-pressed="false">Code</button>
+    <button type="button" class="chip" data-lane="creative" aria-pressed="false">Creative</button>
+  </div>
+  <div class="chip-row" id="mode-chips" role="group" aria-label="Mode">
+    <span class="chip-label">Mode</span>
+    <button type="button" class="chip is-on" data-mode="all" aria-pressed="true">All</button>
+    <button type="button" class="chip" data-mode="online" aria-pressed="false">Online</button>
+    <button type="button" class="chip" data-mode="hybrid" aria-pressed="false">Hybrid</button>
+    <button type="button" class="chip" data-mode="irl" aria-pressed="false">IRL</button>
+  </div>
+  <div class="chip-row" id="format-chips" role="group" aria-label="Format">
+    <span class="chip-label">Format</span>
+    <button type="button" class="chip is-on" data-format="all" aria-pressed="true">All</button>
+    <button type="button" class="chip" data-format="hackathon" aria-pressed="false">Hackathon</button>
+    <button type="button" class="chip" data-format="open-call" aria-pressed="false">Open call</button>
+    <button type="button" class="chip" data-format="film-festival" aria-pressed="false">Film festival</button>
+    <button type="button" class="chip" data-format="prize" aria-pressed="false">Prize</button>
+    <button type="button" class="chip" data-format="challenge" aria-pressed="false">Challenge</button>
+    <button type="button" class="chip" data-format="accelerator" aria-pressed="false">Accelerator</button>
+  </div>
+</div>
+
+<div class="wrap">
+  <p id="status" class="status" aria-live="polite">Reading the soil…</p>
+</div>
+<main id="board" class="wrap board" tabindex="-1">
+  <div class="skeletons" aria-hidden="true">
+    <div class="sk"></div>
+    <div class="sk"></div>
+    <div class="sk"></div>
+  </div>
+</main>
+
+<noscript><p class="wrap lede">JavaScript draws the filters and both views. The calls themselves live in <code>data/opportunities.json</code>.</p></noscript>
+<footer class="wrap foot">
+  <p>Updated from <code>data/opportunities.json</code>. Prize dollars are a rough sort key, not a quote. Field notes are in <code>ENRICHMENT.md</code>.</p>
+</footer>
+<script src="./app.js"></script>
+</body>
+</html>

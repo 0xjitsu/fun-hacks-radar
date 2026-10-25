@@ -30,6 +30,10 @@ The site is plain HTML, CSS, and JS. No build step and no environment variables.
 
 `vercel.json` turns on clean URLs and a few response headers. `data/opportunities.json` is fetched at runtime from the same origin.
 
+## Link preview
+
+Shared links autoplay a 7-second clip of the hero screen on X, iMessage and Slack. The clip is `og/preview.mp4` (1200×630, H.264, under 5 MB), the still fallback is `og/preview.jpg`, and X plays it through `og/player.html`. `vercel.json` leaves the X-Frame-Options header off `/og/player` so X can embed it. `bash scripts/check-og.sh` checks the tags and the file size, and CI runs it on pull requests.
+
 ## Data
 
 `data/opportunities.json` is the enriched board (20 calls). Field notes, FX rules, and the per-item image log are in `ENRICHMENT.md`.

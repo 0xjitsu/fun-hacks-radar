@@ -1,0 +1,16 @@
+# Runs on PRs that touch the page head, preview assets or the check itself:
+# fails if the og:video / twitter:player tags go missing or the clip passes 5 MB.
+name: og-check
+on:
+  pull_request:
+    paths: [index.html, "og/**", scripts/check-og.sh, vercel.json]
+concurrency:
+  group: og-check-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-og.sh

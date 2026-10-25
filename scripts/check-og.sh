@@ -5,14 +5,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 fail=0
+# Ignore commented-out tags
+head=$(perl -0pe 's/<!--.*?-->//gs' index.html)
 for tag in 'property="og:image"' 'property="og:video"' 'property="og:video:secure_url"' \
   'property="og:video:type" content="video/mp4"' 'property="og:video:width"' 'property="og:video:height"' \
   'name="twitter:card" content="player"' 'name="twitter:player"' 'name="twitter:player:width"' 'name="twitter:player:height"'; do
-  grep -q "<meta $tag" index.html || { echo "missing: <meta $tag"; fail=1; }
+  grep -q "<meta $tag" <<<"$head" || { echo "missing: <meta $tag"; fail=1; }
 done
 
 # Every preview URL must be absolute https
-if grep -E '"(og:image|og:video|og:video:secure_url|twitter:image|twitter:player)" content="' index.html | grep -v 'content="https://'; then
+if grep -E '"(og:image|og:video|og:video:secure_url|twitter:image|twitter:player|twitter:player:stream)" content="' <<<"$head" | grep -v 'content="https://'; then
   echo "preview URL above is not absolute https"; fail=1
 fi
 

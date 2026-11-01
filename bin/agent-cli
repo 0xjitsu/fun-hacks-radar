@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""agent-cli: one place for the lookups agents repeat in fun-hacks-radar.
+
+Read-only. Terse output for agents; --json on every subcommand.
+Run `bin/agent-cli` for the list, `bin/agent-cli <cmd> --help` for flags.
+"""
+import argparse, json, os, re, subprocess, sys, urllib.request
+from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA = os.path.join(ROOT, "data", "opportunities.json")
+PROD = "https://fun-hacks-radar.vercel.app"
+GH_REPO = "0xjitsu/fun-hacks-radar"
+SECRET = re.compile(r"((?<=://)[^/@\s]+(?=@)|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abp]-[\w-]{10,}|AKIA[0-9A-Z]{16}|eyJ[\w-]{20,}\.[\w-]+\.[\w-]+)")
+
+
+def mask(s):
+    return SECRET.sub("***", s)
+
+
+def out(args, data, lines):
+    if args.json:
+        print(mask(json.dumps(data, indent=1, ensure_ascii=False)))
+    else:
+        print(mask("\n".join(lines)))
+
+
+def sh(*cmd):
+    try:
+        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
+    except OSError:  # binary not installed
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def board():
+    with open(DATA, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def ts(s):
+    if not isinstance(s, str) or not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # date-only / offsetless values: read in the board's timezone (Asia/Singapore, UTC+8)
+    return d if d.tzinfo else d.replace(tzinfo=timezone(timedelta(hours=8)))
+
+
+def now(args):
+    return ts(args.now) if getattr(args, "now", None) else datetime.now(timezone.utc)
+
+
+def is_closed_label(i):
+    return (i.get("deadlineLabel") or "").upper().startswith("CLOSED")
+
+
+# --- subcommands -----------------------------------------------------------
+
+def cmd_layout(args):
+    """Repo files (images collapsed), branch, HEAD, remote, last radar pass."""
+    files = sh("git", "ls-files").splitlines()
+    imgs = [f for f in files if f.startswith("assets/images/")]
+    rest = [f for f in files if not f.startswith("assets/images/")]
+    last = sh("git", "log", "-1", "--format=%h %cs %s", "--grep=^radar")
+    d = {
+        "branch": sh("git", "rev-parse", "--abbrev-ref", "HEAD"),
+        "head": sh("git", "rev-parse", "--short", "HEAD"),
+        "remote": sh("git", "remote", "get-url", "origin"),
+        "files": rest, "images": len(imgs),
+        "build": "none (static: index.html app.js styles.css data/opportunities.json)",
+        "preview": "python3 -m http.server 8742",
+        "lastRadarPass": last,
+    }
+    out(args, d, [
+        f"branch {d['branch']} @{d['head']}  remote {d['remote']}",
+        "files " + " ".join(rest) + f"  +{len(imgs)} assets/images/*.webp",
+        f"build {d['build']}", f"preview {d['preview']}", f"last radar pass {last or '-'}",
+    ])
+
+
+def cmd_config(args):
+    """vercel.json: cleanUrls, trailingSlash, headers per source."""
+    with open(os.path.join(ROOT, "vercel.json")) as f:
+        v = json.load(f)
+    hdrs = [{"source": h["source"], **{x["key"]: x["value"] for x in h["headers"]}} for h in v.get("headers", [])]
+    d = {k: v.get(k) for k in ("framework", "cleanUrls", "trailingSlash", "buildCommand", "outputDirectory")}
+    d["headers"] = hdrs
+    d["other"] = sorted(set(v) - set(d) - {"headers"})
+    lines = [" ".join(f"{k}={d[k]}" for k in ("framework", "cleanUrls", "trailingSlash", "buildCommand", "outputDirectory"))]
+    lines += [f"{h['source']}: " + "; ".join(f"{k}={x}" for k, x in h.items() if k != "source") for h in hdrs]
+    if d["other"]:
+        lines.append("other keys: " + ", ".join(d["other"]))
+    out(args, d, lines)
+
+
+class _Head(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self._title, self.title = [], False, ""
+
+    def handle_starttag(self, tag, a):
+        a = dict(a)
+        if tag == "meta" and (a.get("property") or a.get("name")):
+            self.tags.append((a.get("property") or a.get("name"), a.get("content", "")))
+        elif tag == "link" and a.get("rel") in ("canonical", "icon", "apple-touch-icon", "manifest"):
+            self.tags.append(("link:" + a["rel"], a.get("href", "")))
+        self._title = tag == "title"
+
+    def handle_data(self, data):
+        if self._title:
+            self.title += data
+
+    def handle_endtag(self, tag):
+        self._title = False
+
+
+def cmd_meta(args):
+    """index.html <head>: title, description, og:*, twitter:*, canonical/icons. Flags missing preview tags."""
+    p = _Head()
+    with open(os.path.join(ROOT, "index.html"), encoding="utf-8") as f:
+        p.feed(re.sub(r"<!--.*?-->", "", f.read(), flags=re.S))
+    names = {k for k, _ in p.tags}
+    want = ["description", "og:title", "og:description", "og:image", "og:url", "twitter:card", "link:canonical"]
+    missing = [w for w in want if w not in names]
+    relative = [k for k, v in p.tags if k.startswith(("og:", "twitter:")) and k.endswith(("image", "video", "url", "secure_url", "player", "stream")) and not v.startswith("https://")]
+    d = {"title": p.title.strip(), "tags": [{"key": k, "value": v} for k, v in p.tags], "missing": missing, "nonHttps": relative}
+    lines = [f"title {d['title']}"] + [f"{k} = {v}" for k, v in p.tags]
+    lines.append("missing " + (", ".join(missing) or "none"))
+    if relative:
+        lines.append("non-https preview urls " + ", ".join(relative))
+    out(args, d, lines)
+
+
+def _fmt_item(i, t=None):
+    dl = ts(i.get("deadline"))
+    when = dl.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%MZ") if dl else "rolling"
+    extra = ""
+    if t and dl:
+        h = (dl - t).total_seconds() / 3600
+        extra = f" T-{h/24:.1f}d" if h >= 0 else f" closed {-h/24:.0f}d ago"
+    usd = i.get("prizeAmountUsd")
+    return f"{i['id']} | {i['lane']}/{i['mode']}/{i['format']} | {when}{extra} | ${usd:,.0f}" if usd else f"{i['id']} | {i['lane']}/{i['mode']}/{i['format']} | {when}{extra} | {i.get('prizeAmountNote') or '-'}"
+
+
+def cmd_items(args):
+    """List/filter board items. One line each: id | lane/mode/format | deadline | prize."""
+    b, t = board(), now(args)
+    xs = b["items"]
+    if args.id:
+        xs = [i for i in xs if i["id"] == args.id]
+        if not xs:
+            print(f"no item {args.id}", file=sys.stderr)
+            sys.exit(1)
+        return out(args, xs[0], [f"{k}: {v}" for k, v in xs[0].items()])
+    if args.lane:
+        xs = [i for i in xs if i["lane"] == args.lane]
+    if args.mode:
+        xs = [i for i in xs if i["mode"] == args.mode]
+    if args.q:
+        q = args.q.lower()
+        xs = [i for i in xs if q in json.dumps(i, ensure_ascii=False).lower()]
+    if args.open:
+        xs = [i for i in xs if not ts(i["deadline"]) or ts(i["deadline"]) >= t]
+    xs = sorted(xs, key=lambda i: (ts(i["deadline"]) is None, ts(i["deadline"]) or t))
+    head = f"{len(xs)}/{len(b['items'])} items  updatedAt {b['updatedAt']} ({b['timezone']})"
+    out(args, {"updatedAt": b["updatedAt"], "count": len(xs), "total": len(b["items"]), "items": xs},
+        [head] + [_fmt_item(i, t) for i in xs])
+
+
+def cmd_due(args):
+    """Deadlines in the next N days, plus past-deadline items whose label is not yet CLOSED (need closing)."""
+    b, t = board(), now(args)
+    end = t + timedelta(days=args.days)
+    soon, stale = [], []
+    for i in b["items"]:
+        dl = ts(i["deadline"])
+        if dl and t <= dl <= end:
+            soon.append(i)
+        elif dl and dl < t and not is_closed_label(i):
+            stale.append(i)
+    soon.sort(key=lambda i: ts(i["deadline"]))
+    stale.sort(key=lambda i: ts(i["deadline"]))
+    age = (t - ts(b["updatedAt"])).days
+    d = {"now": t.isoformat(), "days": args.days, "boardAgeDays": age,
+         "due": [{"id": i["id"], "deadline": i["deadline"], "label": i["deadlineLabel"]} for i in soon],
+         "needsClosing": [{"id": i["id"], "deadline": i["deadline"]} for i in stale]}
+    lines = [f"now {t.astimezone(timezone.utc):%Y-%m-%d %H:%MZ}  board updated {age}d ago", f"due ≤{args.days}d: {len(soon)}"]
+    lines += ["  " + _fmt_item(i, t) for i in soon]
+    lines.append(f"past deadline, label not CLOSED: {len(stale)}")
+    lines += ["  " + _fmt_item(i, t) for i in stale]
+    out(args, d, lines)
+
+
+REQ = ["id", "name", "lane", "tags", "deadline", "deadlineLabel", "prize", "remote", "residencyRisk",
+       "applyUrl", "infoUrl", "fit", "format", "mode", "prizeLabel", "prizeAmountUsd", "prizeAmountNote",
+       "registrationOpens", "registrationCloses", "registrationLabel", "image", "imageCredit"]
+
+
+def cmd_validate(args):
+    """Schema + integrity check of data/opportunities.json. Exit 1 on any error."""
+    try:
+        b = board()
+    except (OSError, ValueError) as e:
+        out(args, {"ok": False, "errors": [str(e)]}, [f"FAIL {e}"])
+        sys.exit(1)
+    errs, warns, seen = [], [], set()
+    if not ts(b.get("updatedAt")):
+        errs.append("updatedAt missing or not ISO")
+    if not isinstance(b.get("items"), list) or not b["items"]:
+        errs.append("items missing or empty")
+    lanes = set(b.get("lanes") or [])
+    for n, i in enumerate(b.get("items") if isinstance(b.get("items"), list) else []):
+        k = i.get("id", f"#{n}")
+        miss = [f for f in REQ if f not in i]
+        if miss:
+            errs.append(f"{k}: missing {','.join(miss)}")
+        if k in seen:
+            errs.append(f"{k}: duplicate id")
+        seen.add(k)
+        if lanes and i.get("lane") not in lanes:
+            errs.append(f"{k}: lane {i.get('lane')!r} not in {sorted(lanes)}")
+        if i.get("mode") not in ("online", "hybrid", "irl"):
+            errs.append(f"{k}: mode {i.get('mode')!r}")
+        for f in ("deadline", "registrationOpens", "registrationCloses"):
+            if i.get(f) and not ts(i[f]):
+                errs.append(f"{k}: {f} not ISO: {i[f]}")
+            elif i.get(f) and len(i[f]) <= 10:
+                warns.append(f"{k}: {f} date-only {i[f]} (read as UTC+8 midnight)")
+        ro, rc = ts(i.get("registrationOpens")), ts(i.get("registrationCloses"))
+        if ro and rc and ro > rc:
+            errs.append(f"{k}: registrationOpens after registrationCloses")
+        for f in ("applyUrl", "infoUrl"):
+            if i.get(f) and not str(i[f]).startswith("https://"):
+                warns.append(f"{k}: {f} not https")
+        usd = i.get("prizeAmountUsd")
+        if usd is not None and not isinstance(usd, (int, float)):
+            errs.append(f"{k}: prizeAmountUsd not number|null")
+        img = i.get("image")
+        if img and not os.path.isfile(os.path.join(ROOT, img)):
+            errs.append(f"{k}: image missing on disk {img}")
+    ok = not errs
+    out(args, {"ok": ok, "items": len(b.get("items") or []), "errors": errs, "warnings": warns},
+        [f"{'OK' if ok else 'FAIL'} {len(b.get('items') or [])} items, {len(errs)} errors, {len(warns)} warnings"] + errs + ["warn " + w for w in warns])
+    sys.exit(0 if ok else 1)
+
+
+def cmd_live(args):
+    """Prod status: HTTP code, <title>, key headers, latest GitHub deployment sha vs origin/main. Network, read-only."""
+    d = {"url": PROD}
+    try:
+        req = urllib.request.Request(PROD, headers={"User-Agent": "agent-cli"})
+        with urllib.request.urlopen(req, timeout=args.timeout) as r:
+            body = r.read(20000).decode("utf-8", "replace")
+            d["status"] = r.status
+            d["headers"] = {h: r.headers.get(h) for h in ("x-vercel-cache", "x-frame-options", "age") if r.headers.get(h)}
+            m = re.search(r"<title>(.*?)</title>", body, re.S)
+            d["title"] = m.group(1).strip() if m else None
+    except Exception as e:  # network down, DNS, 4xx/5xx
+        d["status"], d["error"] = getattr(e, "code", None), str(e)
+    deploy = sh("gh", "api", f"repos/{GH_REPO}/deployments?per_page=1", "--jq", ".[0] | [.environment, .sha[0:7], .created_at] | @tsv")
+    d["latestDeploy"] = deploy or None
+    d["originMain"] = sh("git", "ls-remote", "origin", "refs/heads/main")[:7] or None
+    dsha = deploy.split("\t")[1] if deploy.count("\t") == 2 else None
+    d["deployMatchesMain"] = bool(dsha and d["originMain"] and d["originMain"].startswith(dsha[:7]))
+    out(args, d, [
+        f"{PROD} {d.get('status')} title={d.get('title')!r} {d.get('error', '')}".rstrip(),
+        "headers " + " ".join(f"{k}={v}" for k, v in d.get("headers", {}).items()),
+        f"deploy {deploy or 'n/a (gh missing/unauthed)'}  origin/main {d['originMain']}  match={d['deployMatchesMain']}",
+    ])
+    if d.get("status") != 200:
+        sys.exit(1)
+
+
+CMDS = {
+    "layout": (cmd_layout, []),
+    "config": (cmd_config, []),
+    "meta": (cmd_meta, []),
+    "items": (cmd_items, [
+        (["--lane"], dict(choices=["code", "creative"])),
+        (["--mode"], dict(choices=["online", "hybrid", "irl"])),
+        (["--open"], dict(action="store_true", help="only deadline >= now (or rolling)")),
+        (["--q"], dict(help="substring match across all fields")),
+        (["--id"], dict(help="print one item in full")),
+        (["--now"], dict(help="ISO time to treat as now")),
+    ]),
+    "due": (cmd_due, [
+        (["--days"], dict(type=int, default=7, help="window, default 7")),
+        (["--now"], dict(help="ISO time to treat as now")),
+    ]),
+    "validate": (cmd_validate, []),
+    "live": (cmd_live, [(["--timeout"], dict(type=float, default=10))]),
+}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        for name, (fn, _) in CMDS.items():
+            print(f"{name:9} {fn.__doc__.splitlines()[0]}")
+        return 0
+    ap = argparse.ArgumentParser(prog="agent-cli")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name, (fn, opts) in CMDS.items():
+        p = sub.add_parser(name, help=fn.__doc__, description=fn.__doc__)
+        p.add_argument("--json", action="store_true", help="machine-readable output")
+        for flags, kw in opts:
+            p.add_argument(*flags, **kw)
+        p.set_defaults(fn=fn)
+    args = ap.parse_args(argv)
+    args.fn(args)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

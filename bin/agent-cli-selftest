@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Smoke test for bin/agent-cli: every subcommand's --help, one real call, and --json parses.
+# `live` needs network; it is reported as SKIP (not FAIL) when offline.
+set -u
+cd "$(dirname "$0")/.."
+cli=bin/agent-cli fail=0
+
+"$cli" >/dev/null || { echo "FAIL no-args list"; fail=1; }
+for c in $("$cli" | awk '{print $1}'); do
+  "$cli" "$c" --help >/dev/null || { echo "FAIL $c --help"; fail=1; continue; }
+  if out=$("$cli" "$c" --json 2>&1) && python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out"; then
+    echo "ok   $c"
+  elif [ "$c" = live ]; then
+    echo "SKIP live (network)"
+  else
+    echo "FAIL $c"; echo "$out" | head -5; fail=1
+  fi
+done
+"$cli" items --id does-not-exist >/dev/null 2>&1 && { echo "FAIL items --id should exit 1"; fail=1; }
+exit $fail

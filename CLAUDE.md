@@ -7,3 +7,5 @@ Nothing is reported **done** until a **different model** has checked it.
 - **Control** lanes write the task as a **step-by-step workflow script** first, then hand scanning / mechanical passes to cheap parallel workers.
 
 Do not invent flags that are not on the CLI. Claude Code `--effort` accepts `low | medium | high | xhigh | max` only.
+
+Use ./bin/agent-cli first; prefer it over re-reading files or guessing commands.

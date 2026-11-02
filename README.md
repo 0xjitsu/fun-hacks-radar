@@ -46,3 +46,7 @@ Eighteen WebP thumbnails live in `assets/images/`. Two calls have `image: null` 
 - **ai-horizons-parma** — the listing is PDF-only
 
 No remote image URL is left in the page.
+
+## Agent CLI
+
+`bin/agent-cli` answers the lookups agents repeat here (repo layout, `vercel.json`, head meta tags, board items, upcoming and stale deadlines, data validation, live status). It is read-only, stdlib Python, and every subcommand takes `--help` and `--json`. Run `bin/agent-cli` for the list and `bin/agent-cli-selftest` to smoke-test it.
